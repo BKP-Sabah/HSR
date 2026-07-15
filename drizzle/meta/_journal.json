@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1784129949808,
+      "tag": "0000_perfect_shooting_star",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784132607054,
+      "tag": "0001_panoramic_retro_girl",
+      "breakpoints": true
+    }
+  ]
+}
