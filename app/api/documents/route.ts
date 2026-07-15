@@ -1,4 +1,4 @@
-import { currentActor, jsonError, writeAudit } from "../_shared";
+import { currentActor, currentIdentity, jsonError, writeAudit } from "../_shared";
 import { ensureSchema } from "../_schema";
 import { googleSheetsConfigured, googleSheetsRequest } from "../_google-sheets";
 
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
         fileName,
         mimeType,
         actor: currentActor(request),
+        actorEmail: currentIdentity(request).email,
       });
       return Response.json({ ok: true });
     }
@@ -69,7 +70,8 @@ export async function GET(request: Request) {
     const id = Number(new URL(request.url).searchParams.get("id"));
     if (!Number.isInteger(id) || id < 1) return jsonError("Dokumen tidak sah.");
     if (await googleSheetsConfigured()) {
-      const document = await googleSheetsRequest<{ drive_url?: string }>("get_document", { id });
+      const identity = currentIdentity(request);
+      const document = await googleSheetsRequest<{ drive_url?: string }>("get_document", { id, actorEmail: identity.email, actorName: identity.name });
       if (!document.drive_url) return jsonError("Pautan dokumen tidak ditemui.", 404);
       return Response.redirect(document.drive_url, 302);
     }

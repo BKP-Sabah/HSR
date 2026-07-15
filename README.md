@@ -24,6 +24,7 @@ Struktur Google Sheet:
 - `Documents`
 - `Actions`
 - `Audit_Log`
+- `Users`
 - `Settings`
 - `Lists`
 
@@ -54,3 +55,5 @@ Node.js 22 atau lebih baharu diperlukan.
 - Kekalkan Google Sheet dan folder dokumen sebagai private/restricted.
 - Gunakan Apps Script Web App sebagai perantara; pelayar tidak berhubung terus kepada Sheet menggunakan kunci rahsia.
 - Semua perubahan penting direkodkan dalam `Audit_Log`.
+- Akses dikawal melalui identiti ChatGPT Sites dan tab `Users`; tiga peranan tersedia: `Pentadbir`, `Penyelaras` dan `Pembaca`.
+- Sekurang-kurangnya seorang `Pentadbir` aktif mesti sentiasa dikekalkan.

@@ -5,6 +5,7 @@ const TABLES = {
   documents: "Documents",
   actions: "Actions",
   audit: "Audit_Log",
+  users: "Users",
 };
 
 function doPost(e) {
@@ -19,7 +20,7 @@ function doPost(e) {
       const lock = LockService.getScriptLock();
       lock.waitLock(20000);
       try { runAutomations_(); } finally { lock.releaseLock(); }
-      return json_({ ok: true, data: dashboard_() });
+      return json_({ ok: true, data: dashboard_(payload) });
     }
 
     const lock = LockService.getScriptLock();
@@ -38,7 +39,8 @@ function doPost(e) {
   }
 }
 
-function dashboard_() {
+function dashboard_(payload) {
+  const user = authorizedUser_(payload);
   return {
     projects: records_(TABLES.projects),
     approvals: records_(TABLES.approvals),
@@ -46,13 +48,38 @@ function dashboard_() {
     documents: records_(TABLES.documents),
     actions: records_(TABLES.actions).filter(function (item) { return item.status !== "Selesai"; }),
     audit: records_(TABLES.audit).slice(-100).reverse(),
+    currentUser: { email: user.email, name: user.name, role: user.role },
+    permissions: permissions_(user.role),
+    users: user.role === "Pentadbir" ? records_(TABLES.users) : [],
   };
 }
 
 function workflow_(payload) {
+  const user = authorizedUser_(payload);
   const action = text_(payload.action);
   const actor = text_(payload.actor) || "Penyelaras HSR Negeri";
   const projectId = number_(payload.projectId);
+
+  if (action === "manage_user") {
+    requireRole_(user, ["Pentadbir"]);
+    const email = text_(payload.userEmail).toLowerCase();
+    const name = text_(payload.userName);
+    const role = text_(payload.userRole);
+    const active = payload.userActive !== false;
+    if (!/^\S+@\S+\.\S+$/.test(email) || !name || ["Pentadbir", "Penyelaras", "Pembaca"].indexOf(role) < 0) throw new Error("Maklumat pengguna tidak sah.");
+    const existing = records_(TABLES.users).find(function (item) { return String(item.email).toLowerCase() === email; });
+    if (existing) {
+      if (String(existing.role) === "Pentadbir" && (role !== "Pentadbir" || !active) && activeAdminCount_() <= 1) throw new Error("Sekurang-kurangnya seorang Pentadbir aktif mesti dikekalkan.");
+      updateByField_(TABLES.users, "email", email, { name: name, role: role, active: active, updated_at: now_() });
+      audit_(0, "Akses pengguna dikemas kini", email + " · " + role + " · " + (active ? "Aktif" : "Tidak aktif"), actor);
+    } else {
+      append_(TABLES.users, { email: email, name: name, role: role, active: active, created_at: now_(), updated_at: now_() });
+      audit_(0, "Pengguna ditambah", email + " ditambah sebagai " + role + ".", actor);
+    }
+    return {};
+  }
+
+  requireRole_(user, ["Pentadbir", "Penyelaras"]);
 
   if (action === "create_project") {
     required_(payload, ["title", "principalInvestigator", "ptj", "category"]);
@@ -136,6 +163,7 @@ function workflow_(payload) {
 }
 
 function importProjects_(payload) {
+  requireRole_(authorizedUser_(payload), ["Pentadbir", "Penyelaras"]);
   const rows = payload.rows || [];
   if (!Array.isArray(rows) || !rows.length) throw new Error("Fail import tidak mempunyai rekod.");
   if (rows.length > 300) throw new Error("Maksimum 300 projek bagi setiap import.");
@@ -156,6 +184,7 @@ function importProjects_(payload) {
 }
 
 function uploadDocument_(payload) {
+  requireRole_(authorizedUser_(payload), ["Pentadbir", "Penyelaras"]);
   const projectId = number_(payload.projectId); requireId_(projectId);
   if (!text_(payload.fileName) || !text_(payload.data)) throw new Error("Fail tidak sah.");
   const folder = documentFolder_();
@@ -171,6 +200,7 @@ function uploadDocument_(payload) {
 }
 
 function getDocument_(payload) {
+  authorizedUser_(payload);
   const item = records_(TABLES.documents).find(function (row) { return Number(row.id) === number_(payload.id); });
   if (!item) throw new Error("Dokumen tidak ditemui.");
   return { drive_url: item.drive_url };
@@ -208,11 +238,17 @@ function records_(name) {
 function append_(name, item) { const sheet = sheet_(name); const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; sheet.appendRow(headers.map(function (header) { return item[header] === undefined ? "" : item[header]; })); }
 function updateById_(name, id, patch) { if (!id) throw new Error("Rekod tidak sah."); const sheet = sheet_(name); const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; const idColumn = headers.indexOf("id") + 1; const finder = sheet.getRange(2, idColumn, Math.max(1, sheet.getLastRow() - 1), 1).createTextFinder(String(id)).matchEntireCell(true).findNext(); if (!finder) throw new Error("Rekod tidak ditemui."); const row = finder.getRow(); Object.keys(patch).forEach(function (key) { const column = headers.indexOf(key) + 1; if (column > 0) sheet.getRange(row, column).setValue(patch[key]); }); }
 function updateMatching_(name, predicate, patch) { records_(name).forEach(function (item) { if (predicate(item)) updateById_(name, Number(item.id), patch); }); }
+function updateByField_(name, field, value, patch) { const sheet = sheet_(name); const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; const columnIndex = headers.indexOf(field) + 1; if (columnIndex < 1) throw new Error("Medan tidak ditemui."); const finder = sheet.getRange(2, columnIndex, Math.max(1, sheet.getLastRow() - 1), 1).createTextFinder(String(value)).matchCase(false).matchEntireCell(true).findNext(); if (!finder) throw new Error("Rekod tidak ditemui."); const row = finder.getRow(); Object.keys(patch).forEach(function (key) { const column = headers.indexOf(key) + 1; if (column > 0) sheet.getRange(row, column).setValue(patch[key]); }); }
 function nextId_(name) { return records_(name).reduce(function (max, item) { return Math.max(max, Number(item.id) || 0); }, 0) + 1; }
 function sheet_(name) { const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name); if (!sheet) throw new Error("Tab " + name + " tidak ditemui."); return sheet; }
 function audit_(projectId, action, detail, actor) { append_(TABLES.audit, { id: nextId_(TABLES.audit), project_id: projectId || "", action: action, detail: detail, actor: actor, created_at: now_(), before_json: "", after_json: "" }); }
 function hasOpenAction_(projectId, title) { return records_(TABLES.actions).some(function (item) { return Number(item.project_id) === projectId && item.title === title && item.status !== "Selesai"; }); }
 function documentFolder_() { const properties = PropertiesService.getScriptProperties(); const id = properties.getProperty("DRIVE_FOLDER_ID"); if (id) return DriveApp.getFolderById(id); const folder = DriveApp.createFolder("Dokumen Penyelidikan BKP Sabah"); properties.setProperty("DRIVE_FOLDER_ID", folder.getId()); return folder; }
+function authorizedUser_(payload) { const email = text_(payload && payload.actorEmail).toLowerCase(); if (!email) throw new Error("Identiti pengguna tidak diterima daripada hos aplikasi."); const user = records_(TABLES.users).find(function (item) { return String(item.email).toLowerCase() === email; }); if (!user || !truthy_(user.active)) throw new Error("Akaun anda belum diberikan akses kepada sistem BKP Sabah."); return user; }
+function requireRole_(user, roles) { if (roles.indexOf(String(user.role)) < 0) throw new Error("Peranan " + user.role + " tidak dibenarkan melakukan tindakan ini."); }
+function permissions_(role) { return { canManageUsers: role === "Pentadbir", canWrite: role === "Pentadbir" || role === "Penyelaras", canApprove: role === "Pentadbir" || role === "Penyelaras", canUpload: role === "Pentadbir" || role === "Penyelaras", canExport: true }; }
+function activeAdminCount_() { return records_(TABLES.users).filter(function (item) { return item.role === "Pentadbir" && truthy_(item.active); }).length; }
+function truthy_(value) { return value === true || String(value).toLowerCase() === "true" || Number(value) === 1; }
 function json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
 function text_(value) { return value === null || value === undefined ? "" : String(value).trim(); }
 function number_(value) { const number = Number(value); return Number.isInteger(number) && number > 0 ? number : 0; }

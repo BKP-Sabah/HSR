@@ -17,18 +17,22 @@ export const STATUS_FLOW = [
   "Ditutup",
 ] as const;
 
-export function currentActor(request: Request) {
+export function currentIdentity(request: Request) {
   const email = request.headers.get("oai-authenticated-user-email");
   const encodedName = request.headers.get("oai-authenticated-user-full-name");
   const encoding = request.headers.get("oai-authenticated-user-full-name-encoding");
   if (encodedName && encoding === "percent-encoded-utf-8") {
     try {
-      return decodeURIComponent(encodedName);
+      return { email: email ?? "", name: decodeURIComponent(encodedName) };
     } catch {
       // Fall through to the verified email identity.
     }
   }
-  return email ?? "Penyelaras HSR Negeri";
+  return { email: email ?? "", name: email ?? "Penyelaras HSR Negeri" };
+}
+
+export function currentActor(request: Request) {
+  return currentIdentity(request).name;
 }
 
 export async function writeAudit(

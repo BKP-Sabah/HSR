@@ -1,5 +1,6 @@
 import { ensureSchema } from "../_schema";
 import { googleSheetsConfigured, googleSheetsRequest } from "../_google-sheets";
+import { currentIdentity } from "../_shared";
 
 const DEMO_TITLES = [
   "Oral Health Burden and Service Delivery in Sabah's PPKPS Programme",
@@ -78,10 +79,14 @@ async function prepareProductionData() {
   ]);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     if (await googleSheetsConfigured()) {
-      const data = await googleSheetsRequest<Record<string, unknown>>("dashboard");
+      const identity = currentIdentity(request);
+      const data = await googleSheetsRequest<Record<string, unknown>>("dashboard", {
+        actorEmail: identity.email,
+        actorName: identity.name,
+      });
       return Response.json({
         ...data,
         operatingMode: "production",
@@ -109,6 +114,9 @@ export async function GET() {
       audit: audit.results,
       operatingMode: "production",
       dataSource: "d1-fallback",
+      currentUser: { email: currentIdentity(request).email, name: currentIdentity(request).name, role: "Pentadbir" },
+      permissions: { canManageUsers: true, canWrite: true, canApprove: true, canUpload: true, canExport: true },
+      users: [],
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {

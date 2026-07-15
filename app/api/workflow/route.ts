@@ -1,4 +1,4 @@
-import { currentActor, jsonError, STATUS_FLOW, writeAudit } from "../_shared";
+import { currentActor, currentIdentity, jsonError, STATUS_FLOW, writeAudit } from "../_shared";
 import { ensureSchema } from "../_schema";
 import { googleSheetsConfigured, googleSheetsRequest } from "../_google-sheets";
 
@@ -26,7 +26,8 @@ export async function POST(request: Request) {
 
   if (await googleSheetsConfigured()) {
     try {
-      const data = await googleSheetsRequest<Record<string, unknown>>("workflow", { ...payload, actor });
+      const identity = currentIdentity(request);
+      const data = await googleSheetsRequest<Record<string, unknown>>("workflow", { ...payload, actor, actorEmail: identity.email });
       return Response.json({ ok: true, ...data });
     } catch (error) {
       return jsonError(error instanceof Error ? error.message : "Google Sheets gagal dikemas kini.", 500);

@@ -47,6 +47,7 @@ type Project = {
   next_action: string;
   next_due: string | null;
   last_updated_at: string;
+  canWrite?: boolean;
 };
 
 type Approval = {
@@ -88,6 +89,7 @@ type ActionItem = {
   due_date: string | null;
   status: string;
   external_target: string | null;
+  canApprove?: boolean;
 };
 
 type AuditItem = {
@@ -99,6 +101,23 @@ type AuditItem = {
   created_at: string;
 };
 
+type UserRecord = {
+  email: string;
+  name: string;
+  role: "Pentadbir" | "Penyelaras" | "Pembaca";
+  active: boolean | string | number;
+  created_at: string;
+  updated_at: string;
+};
+
+type Permissions = {
+  canManageUsers: boolean;
+  canWrite: boolean;
+  canApprove: boolean;
+  canUpload: boolean;
+  canExport: boolean;
+};
+
 type DashboardData = {
   projects: Project[];
   approvals: Approval[];
@@ -108,10 +127,13 @@ type DashboardData = {
   audit: AuditItem[];
   operatingMode: "production";
   dataSource?: "google-sheets" | "d1-fallback";
+  currentUser?: { email: string; name: string; role: UserRecord["role"] };
+  permissions?: Permissions;
+  users?: UserRecord[];
   generatedAt: string;
 };
 
-type Tab = "dashboard" | "projects" | "approvals" | "documents" | "audit";
+type Tab = "dashboard" | "projects" | "approvals" | "documents" | "audit" | "users";
 
 const STATUS_FLOW = [
   "Draf pendaftaran",
@@ -138,6 +160,7 @@ const navItems: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "approvals", label: "Kelulusan & tindakan", icon: ShieldCheck },
   { id: "documents", label: "Dokumen", icon: FileText },
   { id: "audit", label: "Log audit", icon: History },
+  { id: "users", label: "Pengguna & akses", icon: UserRound },
 ];
 
 function formatDate(value?: string | null, short = false) {
@@ -197,6 +220,10 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+function userActive(value: UserRecord["active"]) {
+  return value === true || value === 1 || String(value).toLowerCase() === "true";
+}
+
 function Modal({ title, subtitle, onClose, children, wide = false }: {
   title: string;
   subtitle?: string;
@@ -243,6 +270,8 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState<Approval | null>(null);
   const [actionOpen, setActionOpen] = useState<ActionItem | null>(null);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -312,7 +341,9 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
   const approvalPending = data?.approvals.filter((approval) => !approval.verified).length ?? 0;
   const attentionProjects = data?.projects.filter((project) => project.risk !== "Terkawal").length ?? 0;
   const pendingDocuments = data?.documents.filter((doc) => doc.status !== "Disahkan").length ?? 0;
-  const firstName = displayName.split(" ")[0] || "Penyelaras";
+  const permissions: Permissions = data?.permissions ?? { canManageUsers: true, canWrite: true, canApprove: true, canUpload: true, canExport: true };
+  const signedInUser = data?.currentUser ?? { email: "", name: displayName, role: "Pentadbir" as const };
+  const firstName = signedInUser.name.split(" ")[0] || "Penyelaras";
 
   const projectApprovals = (id: number) => data?.approvals.filter((item) => item.project_id === id) ?? [];
   const projectMilestones = (id: number) => data?.milestones.filter((item) => item.project_id === id) ?? [];
@@ -320,7 +351,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
   const projectById = (id: number | null) => data?.projects.find((item) => item.id === id);
 
   const openProject = (project: Project) => {
-    setSelectedProject(project);
+    setSelectedProject({ ...project, canWrite: permissions.canWrite });
     setStatusOpen(false);
   };
 
@@ -339,7 +370,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
         </div>
         <nav className="main-nav" aria-label="Navigasi utama">
           <p className="nav-label">PENGURUSAN</p>
-          {navItems.map((item) => {
+          {navItems.filter((item) => item.id !== "users" || permissions.canManageUsers).map((item) => {
             const Icon = item.icon;
             const count = item.id === "approvals" ? approvalPending : item.id === "documents" ? pendingDocuments : 0;
             return (
@@ -354,8 +385,8 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
           <div><strong>Kawalan selamat aktif</strong><span>Sistem luar tidak diubah secara automatik</span></div>
         </div>
         <div className="sidebar-user">
-          <div className="avatar">{initials(displayName)}</div>
-          <div><strong>{displayName}</strong><span>Penyelaras HSR Negeri</span></div>
+          <div className="avatar">{initials(signedInUser.name)}</div>
+          <div><strong>{signedInUser.name}</strong><span>{signedInUser.role}</span></div>
         </div>
       </aside>
 
@@ -371,7 +402,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
           <div className="topbar-actions">
             <span className="sync-state"><CircleDot size={12} /> {data?.dataSource === "google-sheets" ? "Google Sheets aktif" : "Mod operasi sebenar"}</span>
             <button className="icon-btn notification-btn" aria-label="Notifikasi"><Bell size={19} />{approvalPending > 0 && <i />}</button>
-            <button className="primary-btn" onClick={() => setCreateOpen(true)}><Plus size={17} /> Projek baharu</button>
+            {permissions.canWrite && <button className="primary-btn" onClick={() => setCreateOpen(true)}><Plus size={17} /> Projek baharu</button>}
           </div>
         </header>
 
@@ -396,7 +427,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
                   </section>
 
                   {data.projects.length === 0 ? (
-                    <ProductionEmpty onCreate={() => setCreateOpen(true)} onImport={() => setImportOpen(true)} />
+                    <ProductionEmpty canWrite={permissions.canWrite} onCreate={() => setCreateOpen(true)} onImport={() => setImportOpen(true)} />
                   ) : <>
                   <section className="metric-grid">
                     <MetricCard icon={<FlaskConical size={20} />} label="Projek aktif" value={activeProjects} note="Portfolio semasa" tone="teal" />
@@ -430,7 +461,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
                         {data.actions.slice(0, 4).map((item) => {
                           const project = projectById(item.project_id);
                           return (
-                            <button className="action-card" key={item.id} onClick={() => setActionOpen(item)}>
+                            <button className="action-card" key={item.id} onClick={() => setActionOpen({ ...item, canApprove: permissions.canApprove })}>
                               <span className="action-icon"><ClipboardCheck size={17} /></span>
                               <span className="action-copy"><small>{project?.research_id ?? "UMUM"} · {item.type}</small><strong>{item.title}</strong><em>{item.external_target || "Semakan dalaman"}</em></span>
                               <span className="action-due">{dueLabel(item.due_date)}<ChevronRight size={15} /></span>
@@ -459,7 +490,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
 
               {tab === "projects" && (
                 <section>
-                  <PageTitle eyebrow="PORTFOLIO NEGERI" title="Semua projek penyelidikan" description="Rekod induk bagi projek dari pendaftaran hingga penutupan." action={<div className="title-actions"><a className="secondary-btn" href="/api/export"><Download size={16} /> Eksport CSV</a><button className="secondary-btn" onClick={() => setImportOpen(true)}><UploadCloud size={16} /> Import CSV</button><button className="primary-btn" onClick={() => setCreateOpen(true)}><Plus size={17} /> Daftar projek</button></div>} />
+                  <PageTitle eyebrow="PORTFOLIO NEGERI" title="Semua projek penyelidikan" description="Rekod induk bagi projek dari pendaftaran hingga penutupan." action={<div className="title-actions"><a className="secondary-btn" href="/api/export"><Download size={16} /> Eksport CSV</a>{permissions.canWrite && <><button className="secondary-btn" onClick={() => setImportOpen(true)}><UploadCloud size={16} /> Import CSV</button><button className="primary-btn" onClick={() => setCreateOpen(true)}><Plus size={17} /> Daftar projek</button></>}</div>} />
                   <div className="filter-bar">
                     <div className="inline-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari portfolio…" /></div>
                     <div className="filter-select"><SlidersHorizontal size={16} /><select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value)}><option>Semua</option><option>Terkawal</option><option>Perhatian</option><option>Lewat</option></select></div>
@@ -498,7 +529,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
                       <div className="approval-list">
                         {data.approvals.filter((item) => !item.verified).map((item) => {
                           const project = projectById(item.project_id);
-                          return <button key={item.id} onClick={() => setApprovalOpen(item)}><span className="approval-logo">{item.agency.slice(0, 2).toUpperCase()}</span><span><small>{project?.research_id}</small><strong>{item.agency}</strong><em>{project?.title}</em></span><span className={`status-chip ${statusTone(item.status)}`}>{item.status}</span><ChevronRight size={17} /></button>;
+                          return <button key={item.id} onClick={() => permissions.canApprove && setApprovalOpen(item)}><span className="approval-logo">{item.agency.slice(0, 2).toUpperCase()}</span><span><small>{project?.research_id}</small><strong>{item.agency}</strong><em>{project?.title}</em></span><span className={`status-chip ${statusTone(item.status)}`}>{item.status}</span>{permissions.canApprove && <ChevronRight size={17} />}</button>;
                         })}
                         {approvalPending === 0 && <EmptyState icon={<CheckCircle2 size={28} />} title="Semua keputusan disahkan" detail="Tiada rekod kelulusan tertunggak." />}
                       </div>
@@ -506,7 +537,7 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
                     <div className="panel">
                       <div className="panel-header"><div><p className="panel-kicker">DRAF & PERINGATAN</p><h2>Menunggu arahan</h2></div></div>
                       <div className="review-queue">
-                        {data.actions.map((item) => <button key={item.id} onClick={() => setActionOpen(item)}><span className="review-icon"><FileCheck2 size={18} /></span><span><small>{projectById(item.project_id)?.research_id} · {item.type}</small><strong>{item.title}</strong><em>{item.status}</em></span><ChevronRight size={17} /></button>)}
+                        {data.actions.map((item) => <button key={item.id} onClick={() => setActionOpen({ ...item, canApprove: permissions.canApprove })}><span className="review-icon"><FileCheck2 size={18} /></span><span><small>{projectById(item.project_id)?.research_id} · {item.type}</small><strong>{item.title}</strong><em>{item.status}</em></span><ChevronRight size={17} /></button>)}
                       </div>
                     </div>
                   </div>
@@ -515,13 +546,13 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
 
               {tab === "documents" && (
                 <section>
-                  <PageTitle eyebrow="REPOSITORI DALAMAN" title="Dokumen penyelidikan" description="Versi, status pengesahan dan rekod muat naik disimpan bersama projek." action={<button className="primary-btn" onClick={() => setUploadOpen(true)}><UploadCloud size={17} /> Muat naik</button>} />
+                  <PageTitle eyebrow="REPOSITORI DALAMAN" title="Dokumen penyelidikan" description="Versi, status pengesahan dan rekod muat naik disimpan bersama projek." action={permissions.canUpload ? <button className="primary-btn" onClick={() => setUploadOpen(true)}><UploadCloud size={17} /> Muat naik</button> : undefined} />
                   <div className="table-card">
                     <table className="data-table document-table">
                       <thead><tr><th>Dokumen</th><th>Projek</th><th>Versi</th><th>Dimuat naik</th><th>Status</th><th>Tindakan</th></tr></thead>
                       <tbody>{data.documents.map((doc) => {
                         const project = projectById(doc.project_id);
-                        return <tr key={doc.id}><td><div className="file-cell"><span><FileText size={19} /></span><div><strong>{doc.file_name}</strong><small>{doc.type}</small></div></div></td><td><strong>{project?.research_id}</strong><span>{project?.title}</span></td><td><span className="version-pill">v{doc.version}</span></td><td><strong>{formatDate(doc.uploaded_at, true)}</strong><span>{doc.uploaded_by}</span></td><td><span className={`status-chip ${statusTone(doc.status)}`}>{doc.status}</span></td><td><div className="table-actions"><a className="icon-btn" href={`/api/documents?id=${doc.id}`} target="_blank" aria-label="Buka dokumen"><Download size={17} /></a>{doc.status !== "Disahkan" && <button className="small-btn" disabled={busy} onClick={() => void workflow({ action: "verify_document", projectId: doc.project_id, documentId: doc.id, fileName: doc.file_name }, "Dokumen disahkan.")}>Sahkan</button>}</div></td></tr>;
+                        return <tr key={doc.id}><td><div className="file-cell"><span><FileText size={19} /></span><div><strong>{doc.file_name}</strong><small>{doc.type}</small></div></div></td><td><strong>{project?.research_id}</strong><span>{project?.title}</span></td><td><span className="version-pill">v{doc.version}</span></td><td><strong>{formatDate(doc.uploaded_at, true)}</strong><span>{doc.uploaded_by}</span></td><td><span className={`status-chip ${statusTone(doc.status)}`}>{doc.status}</span></td><td><div className="table-actions"><a className="icon-btn" href={`/api/documents?id=${doc.id}`} target="_blank" aria-label="Buka dokumen"><Download size={17} /></a>{permissions.canApprove && doc.status !== "Disahkan" && <button className="small-btn" disabled={busy} onClick={() => void workflow({ action: "verify_document", projectId: doc.project_id, documentId: doc.id, fileName: doc.file_name }, "Dokumen disahkan.")}>Sahkan</button>}</div></td></tr>;
                       })}</tbody>
                     </table>
                     {data.documents.length === 0 && <EmptyState icon={<UploadCloud size={30} />} title="Belum ada dokumen" detail="Muat naik proposal, surat kelulusan atau laporan untuk memulakan repositori." />}
@@ -538,6 +569,23 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
                   </div>
                 </section>
               )}
+
+              {tab === "users" && permissions.canManageUsers && (
+                <section>
+                  <PageTitle eyebrow="KAWALAN AKSES" title="Pengguna & peranan" description="Tetapkan tahap akses dalaman bagi setiap ahli pasukan BKP." action={<button className="primary-btn" onClick={() => { setEditingUser(null); setUserModalOpen(true); }}><Plus size={17} /> Tambah pengguna</button>} />
+                  <div className="role-summary">
+                    {(["Pentadbir", "Penyelaras", "Pembaca"] as const).map((role) => <div key={role}><span className={`role-badge role-${role.toLowerCase()}`}>{role}</span><strong>{(data.users ?? []).filter((user) => user.role === role && userActive(user.active)).length}</strong><small>pengguna aktif</small></div>)}
+                  </div>
+                  <div className="table-card">
+                    <table className="data-table user-table">
+                      <thead><tr><th>Pengguna</th><th>Peranan</th><th>Status</th><th>Dikemas kini</th><th>Tindakan</th></tr></thead>
+                      <tbody>{(data.users ?? []).map((user) => <tr key={user.email}><td><strong>{user.name}</strong><span>{user.email}</span></td><td><span className={`role-badge role-${user.role.toLowerCase()}`}>{user.role}</span></td><td><span className={`status-chip ${userActive(user.active) ? "status-success" : "status-muted"}`}>{userActive(user.active) ? "Aktif" : "Tidak aktif"}</span></td><td>{formatDate(user.updated_at || user.created_at, true)}</td><td><button className="small-btn" onClick={() => { setEditingUser(user); setUserModalOpen(true); }}>Urus</button></td></tr>)}</tbody>
+                    </table>
+                    {(data.users ?? []).length === 0 && <EmptyState icon={<UserRound size={28} />} title="Belum ada pengguna" detail="Tambah pengguna pertama dan tetapkan peranannya." />}
+                  </div>
+                  <div className="access-note"><ShieldCheck size={19} /><div><strong>Dua lapisan akses</strong><span>Peranan di sini mengawal tindakan dalam sistem. Pengguna juga perlu dibenarkan dalam ChatGPT Sites sebelum mereka boleh membuka aplikasi.</span></div></div>
+                </section>
+              )}
             </>
           )}
         </div>
@@ -545,12 +593,12 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
 
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
 
-      {createOpen && <CreateProjectModal busy={busy} onClose={() => setCreateOpen(false)} onSubmit={async (values) => {
+      {permissions.canWrite && createOpen && <CreateProjectModal busy={busy} onClose={() => setCreateOpen(false)} onSubmit={async (values) => {
         const ok = await workflow({ action: "create_project", ...values }, "Projek didaftarkan dan senarai semak dijana.");
         if (ok) setCreateOpen(false);
       }} />}
 
-      {importOpen && <ImportModal busy={busy} onClose={() => setImportOpen(false)} onSubmit={async (rows) => {
+      {permissions.canWrite && importOpen && <ImportModal busy={busy} onClose={() => setImportOpen(false)} onSubmit={async (rows) => {
         setBusy(true);
         try {
           const response = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows }) });
@@ -627,6 +675,11 @@ export default function DashboardApp({ displayName }: { displayName: string }) {
         const ok = await workflow({ action: "complete_action", projectId: actionOpen.project_id, actionId: actionOpen.id, title: actionOpen.title }, "Tindakan ditandakan selesai.");
         if (ok) setActionOpen(null);
       }} />}
+
+      {permissions.canManageUsers && userModalOpen && <UserModal user={editingUser} busy={busy} onClose={() => { setUserModalOpen(false); setEditingUser(null); }} onSubmit={async (values) => {
+        const ok = await workflow({ action: "manage_user", ...values }, editingUser ? "Akses pengguna dikemas kini." : "Pengguna baharu ditambah.");
+        if (ok) { setUserModalOpen(false); setEditingUser(null); }
+      }} />}
     </div>
   );
 }
@@ -664,8 +717,8 @@ function parseCsv(input: string) {
   return rows.slice(1).map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])));
 }
 
-function ProductionEmpty({ onCreate, onImport }: { onCreate: () => void; onImport: () => void }) {
-  return <section className="production-empty"><span className="production-empty-icon"><Database size={30} /></span><p className="eyebrow">SISTEM OPERASI SEDIA DIGUNAKAN</p><h2>Mulakan portfolio sebenar BKP Sabah</h2><p>Pangkalan data kini kosong dan tidak mengandungi rekod demonstrasi. Daftar projek pertama atau import pangkalan data sedia ada menggunakan templat CSV.</p><div><button className="primary-btn" onClick={onCreate}><Plus size={17} /> Daftar projek pertama</button><button className="secondary-btn" onClick={onImport}><UploadCloud size={17} /> Import rekod sedia ada</button></div><small><ShieldCheck size={14} /> Semua perubahan direkodkan; sistem luar kekal tidak disentuh.</small></section>;
+function ProductionEmpty({ canWrite, onCreate, onImport }: { canWrite: boolean; onCreate: () => void; onImport: () => void }) {
+  return <section className="production-empty"><span className="production-empty-icon"><Database size={30} /></span><p className="eyebrow">SISTEM OPERASI SEDIA DIGUNAKAN</p><h2>Mulakan portfolio sebenar BKP Sabah</h2><p>Pangkalan data kini kosong dan tidak mengandungi rekod demonstrasi. {canWrite ? "Daftar projek pertama atau import pangkalan data sedia ada menggunakan templat CSV." : "Akaun Pembaca boleh melihat rekod selepas pasukan Pentadbir atau Penyelaras menambah projek."}</p>{canWrite ? <div><button className="primary-btn" onClick={onCreate}><Plus size={17} /> Daftar projek pertama</button><button className="secondary-btn" onClick={onImport}><UploadCloud size={17} /> Import rekod sedia ada</button></div> : <div className="read-only-note"><LockKeyhole size={16} /> Mod Pembaca — tiada kebenaran menambah atau mengubah rekod.</div>}<small><ShieldCheck size={14} /> Semua perubahan direkodkan; sistem luar kekal tidak disentuh.</small></section>;
 }
 
 function MetricCard({ icon, label, value, note, tone }: { icon: ReactNode; label: string; value: number; note: string; tone: string }) {
@@ -728,7 +781,13 @@ function MilestoneModal({ project, busy, onClose, onSubmit }: { project: Project
 }
 
 function ProjectModal({ project, approvals, milestones, documents, busy, onClose, onStatus, onEdit, onAddMilestone, onUpload, onNoChange, onCompleteMilestone }: { project: Project; approvals: Approval[]; milestones: Milestone[]; documents: DocumentRecord[]; busy: boolean; onClose: () => void; onStatus: () => void; onEdit: () => void; onAddMilestone: () => void; onUpload: () => void; onNoChange: () => void; onCompleteMilestone: (milestone: Milestone) => void }) {
-  return <Modal title={project.research_id} subtitle={project.title} onClose={onClose} wide><div className="project-detail-top"><div><span className={`status-chip ${statusTone(project.status)}`}>{project.status}</span><h3>{project.progress}% siap</h3><div className="detail-progress"><i style={{ width: `${project.progress}%` }} /></div></div><div className="detail-meta"><span><UserRound size={15} />{project.principal_investigator}</span><span><Building2 size={15} />{project.ptj}</span><span><CalendarDays size={15} />Dikemas kini {formatDate(project.last_updated_at, true)}</span></div></div><div className="detail-actions"><button className="primary-btn" onClick={onStatus}>Kemas kini status</button><button className="secondary-btn" onClick={onEdit}>Edit maklumat</button><button className="secondary-btn" onClick={onUpload}><UploadCloud size={16} /> Dokumen</button><button className="secondary-btn" disabled={busy} onClick={onNoChange}><Check size={16} /> Tiada perubahan</button></div><div className="detail-grid"><section><h3>Kelulusan</h3><div className="mini-list">{approvals.map((item) => <div key={item.id}><span className={`mini-status ${item.verified ? "done" : "pending"}`}>{item.verified ? <Check size={13} /> : <Clock3 size={13} />}</span><div><strong>{item.agency}</strong><small>{item.reference_no || item.status}</small></div><span className={`status-chip ${statusTone(item.status)}`}>{item.status}</span></div>)}</div></section><section><div className="subsection-heading"><h3>Milestone</h3><button onClick={onAddMilestone}><Plus size={13} /> Tambah</button></div><div className="mini-list">{milestones.map((item) => <div key={item.id}><span className={`mini-status ${item.status === "Selesai" ? "done" : "pending"}`}>{item.status === "Selesai" ? <Check size={13} /> : <Clock3 size={13} />}</span><div><strong>{item.title}</strong><small>{dueLabel(item.due_date)} · {formatDate(item.due_date, true)}</small></div>{item.status !== "Selesai" && <button className="mini-complete" disabled={busy} onClick={() => onCompleteMilestone(item)}>Selesai</button>}</div>)}</div></section></div><section className="document-summary"><div><h3>Dokumen projek</h3><span>{documents.length} fail direkodkan</span></div>{documents.length > 0 ? documents.slice(0, 3).map((doc) => <a key={doc.id} href={`/api/documents?id=${doc.id}`} target="_blank"><FileText size={17} /><span><strong>{doc.file_name}</strong><small>{doc.type} · v{doc.version}</small></span><Download size={16} /></a>) : <p>Belum ada dokumen dimuat naik.</p>}</section></Modal>;
+  const canWrite = project.canWrite !== false;
+  return <Modal title={project.research_id} subtitle={project.title} onClose={onClose} wide>
+    <div className="project-detail-top"><div><span className={`status-chip ${statusTone(project.status)}`}>{project.status}</span><h3>{project.progress}% siap</h3><div className="detail-progress"><i style={{ width: `${project.progress}%` }} /></div></div><div className="detail-meta"><span><UserRound size={15} />{project.principal_investigator}</span><span><Building2 size={15} />{project.ptj}</span><span><CalendarDays size={15} />Dikemas kini {formatDate(project.last_updated_at, true)}</span></div></div>
+    {canWrite ? <div className="detail-actions"><button className="primary-btn" onClick={onStatus}>Kemas kini status</button><button className="secondary-btn" onClick={onEdit}>Edit maklumat</button><button className="secondary-btn" onClick={onUpload}><UploadCloud size={16} /> Dokumen</button><button className="secondary-btn" disabled={busy} onClick={onNoChange}><Check size={16} /> Tiada perubahan</button></div> : <div className="read-only-note"><LockKeyhole size={16} /> Mod Pembaca — rekod tidak boleh diubah.</div>}
+    <div className="detail-grid"><section><h3>Kelulusan</h3><div className="mini-list">{approvals.map((item) => <div key={item.id}><span className={`mini-status ${item.verified ? "done" : "pending"}`}>{item.verified ? <Check size={13} /> : <Clock3 size={13} />}</span><div><strong>{item.agency}</strong><small>{item.reference_no || item.status}</small></div><span className={`status-chip ${statusTone(item.status)}`}>{item.status}</span></div>)}</div></section><section><div className="subsection-heading"><h3>Milestone</h3>{canWrite && <button onClick={onAddMilestone}><Plus size={13} /> Tambah</button>}</div><div className="mini-list">{milestones.map((item) => <div key={item.id}><span className={`mini-status ${item.status === "Selesai" ? "done" : "pending"}`}>{item.status === "Selesai" ? <Check size={13} /> : <Clock3 size={13} />}</span><div><strong>{item.title}</strong><small>{dueLabel(item.due_date)} · {formatDate(item.due_date, true)}</small></div>{canWrite && item.status !== "Selesai" && <button className="mini-complete" disabled={busy} onClick={() => onCompleteMilestone(item)}>Selesai</button>}</div>)}</div></section></div>
+    <section className="document-summary"><div><h3>Dokumen projek</h3><span>{documents.length} fail direkodkan</span></div>{documents.length > 0 ? documents.slice(0, 3).map((doc) => <a key={doc.id} href={`/api/documents?id=${doc.id}`} target="_blank"><FileText size={17} /><span><strong>{doc.file_name}</strong><small>{doc.type} · v{doc.version}</small></span><Download size={16} /></a>) : <p>Belum ada dokumen dimuat naik.</p>}</section>
+  </Modal>;
 }
 
 function StatusModal({ project, busy, onClose, onSubmit }: { project: Project; busy: boolean; onClose: () => void; onSubmit: (values: Record<string, unknown>) => void }) {
@@ -756,7 +815,18 @@ function ApprovalModal({ approval, project, busy, onClose, onSubmit }: { approva
 }
 
 function ActionModal({ item, project, busy, onClose, onApprove, onComplete }: { item: ActionItem; project?: Project; busy: boolean; onClose: () => void; onApprove: () => void; onComplete: () => void }) {
-  return <Modal title="Semakan tindakan" subtitle={`${project?.research_id ?? "Tindakan umum"} · ${item.type}`} onClose={onClose}><div className="action-review"><div className="review-heading"><span className="review-big-icon"><ClipboardCheck size={24} /></span><div><h3>{item.title}</h3><p>{item.detail}</p></div></div><dl><div><dt>Projek</dt><dd>{project?.title ?? "Rekod umum"}</dd></div><div><dt>Sasaran luar</dt><dd>{item.external_target ?? "Tiada"}</dd></div><div><dt>Tarikh sasaran</dt><dd>{formatDate(item.due_date)} · {dueLabel(item.due_date)}</dd></div><div><dt>Status</dt><dd><span className={`status-chip ${statusTone(item.status)}`}>{item.status}</span></dd></div></dl><div className="approval-boundary"><BanIcon /><div><strong>Sempadan tindakan</strong><span>Kelulusan dalaman tidak menghantar e-mel, memuat naik ke portal atau mengubah sistem luar.</span></div></div><div className="modal-actions"><button className="secondary-btn" onClick={onClose}>Tutup</button><button className="secondary-btn" disabled={busy} onClick={onComplete}><CheckCircle2 size={16} /> Tandakan selesai</button>{item.external_target !== "Dalaman BKP Sabah" && <button className="primary-btn" disabled={busy || item.status.includes("Diluluskan dalaman")} onClick={onApprove}>{busy ? <RefreshCw className="spin" size={17} /> : <Check size={17} />} Luluskan draf dalaman</button>}</div></div></Modal>;
+  const canApprove = item.canApprove !== false;
+  return <Modal title="Semakan tindakan" subtitle={`${project?.research_id ?? "Tindakan umum"} · ${item.type}`} onClose={onClose}><div className="action-review"><div className="review-heading"><span className="review-big-icon"><ClipboardCheck size={24} /></span><div><h3>{item.title}</h3><p>{item.detail}</p></div></div><dl><div><dt>Projek</dt><dd>{project?.title ?? "Rekod umum"}</dd></div><div><dt>Sasaran luar</dt><dd>{item.external_target ?? "Tiada"}</dd></div><div><dt>Tarikh sasaran</dt><dd>{formatDate(item.due_date)} · {dueLabel(item.due_date)}</dd></div><div><dt>Status</dt><dd><span className={`status-chip ${statusTone(item.status)}`}>{item.status}</span></dd></div></dl><div className="approval-boundary"><BanIcon /><div><strong>Sempadan tindakan</strong><span>Kelulusan dalaman tidak menghantar e-mel, memuat naik ke portal atau mengubah sistem luar.</span></div></div>{!canApprove && <div className="read-only-note"><LockKeyhole size={16} /> Akaun Pembaca tidak boleh meluluskan atau menutup tindakan.</div>}<div className="modal-actions"><button className="secondary-btn" onClick={onClose}>Tutup</button>{canApprove && <button className="secondary-btn" disabled={busy} onClick={onComplete}><CheckCircle2 size={16} /> Tandakan selesai</button>}{canApprove && item.external_target !== "Dalaman BKP Sabah" && <button className="primary-btn" disabled={busy || item.status.includes("Diluluskan dalaman")} onClick={onApprove}>{busy ? <RefreshCw className="spin" size={17} /> : <Check size={17} />} Luluskan draf dalaman</button>}</div></div></Modal>;
+}
+
+function UserModal({ user, busy, onClose, onSubmit }: { user: UserRecord | null; busy: boolean; onClose: () => void; onSubmit: (values: Record<string, unknown>) => void }) {
+  const [values, setValues] = useState({
+    userEmail: user?.email ?? "",
+    userName: user?.name ?? "",
+    userRole: user?.role ?? "Pembaca",
+    userActive: user ? userActive(user.active) : true,
+  });
+  return <Modal title={user ? "Urus akses pengguna" : "Tambah pengguna"} subtitle="Peranan menentukan tindakan yang dibenarkan dalam sistem HSR." onClose={onClose}><form className="form-stack" onSubmit={(event) => { event.preventDefault(); onSubmit(values); }}><div className="form-grid"><label className="field"><span>Nama penuh</span><input required value={values.userName} onChange={(event) => setValues({ ...values, userName: event.target.value })} placeholder="Nama ahli pasukan" /></label><label className="field"><span>E-mel akaun ChatGPT Work</span><input required type="email" disabled={Boolean(user)} value={values.userEmail} onChange={(event) => setValues({ ...values, userEmail: event.target.value.trim().toLowerCase() })} placeholder="nama@moh.gov.my" /></label><label className="field"><span>Peranan</span><select value={values.userRole} onChange={(event) => setValues({ ...values, userRole: event.target.value })}><option>Pentadbir</option><option>Penyelaras</option><option>Pembaca</option></select></label><label className="field toggle-field"><span>Status akaun</span><span className="toggle-control"><input type="checkbox" checked={values.userActive} onChange={(event) => setValues({ ...values, userActive: event.target.checked })} /> {values.userActive ? "Aktif" : "Tidak aktif"}</span></label></div><div className="automation-note"><ShieldCheck size={18} /><div><strong>Lapisan akses berganda</strong><span>Pengguna juga perlu ditambah pada akses laman ChatGPT Sites menggunakan alamat e-mel yang sama. Hanya Pentadbir boleh mengurus senarai ini.</span></div></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={onClose}>Batal</button><button className="primary-btn" disabled={busy}>{busy ? <RefreshCw className="spin" size={17} /> : <Check size={17} />} Simpan pengguna</button></div></form></Modal>;
 }
 
 function BanIcon() { return <span className="ban-icon"><LockKeyhole size={18} /></span>; }

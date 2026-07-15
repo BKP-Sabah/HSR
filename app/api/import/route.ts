@@ -1,4 +1,4 @@
-import { currentActor, jsonError, STATUS_FLOW } from "../_shared";
+import { currentActor, currentIdentity, jsonError, STATUS_FLOW } from "../_shared";
 import { ensureSchema } from "../_schema";
 import { googleSheetsConfigured, googleSheetsRequest } from "../_google-sheets";
 
@@ -35,6 +35,7 @@ export async function POST(request: Request) {
       const data = await googleSheetsRequest<{ imported: number; skipped: number }>("import_projects", {
         rows: payload.rows,
         actor: currentActor(request),
+        actorEmail: currentIdentity(request).email,
       });
       return Response.json({ ok: true, ...data });
     }
